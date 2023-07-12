@@ -1,4 +1,4 @@
-use lock_api::{GuardSend, RawMutex};
+use lock_api::{RawMutex, GuardNoSend};
 use raw_locker::{Error::*, HolderWord, LockWord};
 use std::sync::Arc;
 std::thread_local! {
@@ -14,7 +14,7 @@ unsafe impl RawMutex for RawLocker {
     const INIT: RawLocker = RawLocker(LockWord::new());
 
     // A spinlock guard can be sent to another thread and unlocked there
-    type GuardMarker = GuardSend;
+    type GuardMarker = GuardNoSend;
 
     fn lock(&self) {
         TLS_HOLDER_WORD.with(|holder| match self.0.try_lock_with(holder) {
