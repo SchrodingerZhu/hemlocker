@@ -109,4 +109,23 @@ mod test {
             });
         });
     }
+
+    #[test]
+    fn no_dead_loop_with_naughty_thread() {
+        use crate::RobustHemLock;
+        let lock = RobustHemLock::new(());
+
+        std::thread::scope(|x| {
+            for _ in 0..10 {
+                x.spawn(|| {
+                    for _ in 0..100 {
+                        if let Some(guard) = lock.try_lock() {
+                            std::mem::forget(guard);
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+    }
 }

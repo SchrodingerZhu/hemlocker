@@ -7,7 +7,7 @@ use alloc::sync::{Arc, Weak};
 use core::error::Error as ErrorTrait;
 use core::marker::PhantomPinned;
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use parking_lot_core::SpinWait;
 
 // Both [`HolderWord`] and [`LockWord`] need to be pinned. Otherwise, rust is free to move them around.
@@ -20,10 +20,10 @@ pub struct HolderWord {
     _pinned: PhantomPinned,
 }
 
-#[repr(transparent)]
 #[derive(Default)]
 pub struct LockWord {
     tail: AtomicPtr<HolderWord>,
+    poisoned: AtomicBool,
     _pinned: PhantomPinned,
 }
 
@@ -62,6 +62,7 @@ impl LockWord {
     pub const fn new() -> Self {
         LockWord {
             tail: AtomicPtr::new(ptr::null_mut()),
+            poisoned: AtomicBool::new(false),
             _pinned: PhantomPinned,
         }
     }
@@ -158,13 +159,19 @@ impl LockWord {
                             // predecessor.
                             drop(pred);
                             waiter.spin();
+                            if self.poisoned.load(Ordering::Acquire) {
+                                return Err(Error::DeadPredecessor);
+                            }
                         } else {
                             // We have acquired the lock.
                             break;
                         }
                     }
                     // The predecessor is dead. We cannot acquire the lock anymore.
-                    None => return Err(Error::DeadPredecessor),
+                    None => {
+                        self.poisoned.store(true, Ordering::Release);
+                        return Err(Error::DeadPredecessor);
+                    }
                 }
             }
         }
@@ -228,10 +235,12 @@ impl Drop for LockWord {
 #[cfg(test)]
 mod test {
     extern crate std;
+
     use core::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{Error, HolderWord, LockWord};
     use alloc::sync::Arc;
+
     #[test]
     fn trivial_lock_unlock() {
         let lock = LockWord::default();
@@ -239,6 +248,7 @@ mod test {
         lock.try_lock_with(&holder).unwrap();
         lock.try_unlock_with(&holder).unwrap();
     }
+
     #[test]
     fn trivial_dead_pred() {
         let lock = LockWord::default();
@@ -249,6 +259,7 @@ mod test {
         let holder = Arc::new(HolderWord::default());
         assert_eq!(lock.try_lock_with(&holder), Err(Error::DeadPredecessor));
     }
+
     #[test]
     fn single_thread_multiple_lock() {
         let lock0 = LockWord::default();
