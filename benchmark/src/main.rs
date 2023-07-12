@@ -72,6 +72,21 @@ impl<T> Mutex<T> for tls_locker::HemLock<T> {
     }
 }
 
+impl<T> Mutex<T> for tls_locker::RobustHemLock<T> {
+    fn new(v: T) -> Self {
+        Self::new(v)
+    }
+    fn lock<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        f(&mut *self.lock())
+    }
+    fn name() -> &'static str {
+        "tls_locker::RHemLock"
+    }
+}
+
 #[cfg(not(windows))]
 type SrwLock<T> = std::sync::Mutex<T>;
 
@@ -260,6 +275,14 @@ fn run_all(
     );
 
     run_benchmark_iterations::<tls_locker::HemLock<f64>>(
+        num_threads,
+        work_per_critical_section,
+        work_between_critical_sections,
+        seconds_per_test,
+        test_iterations,
+    );
+
+    run_benchmark_iterations::<tls_locker::RobustHemLock<f64>>(
         num_threads,
         work_per_critical_section,
         work_between_critical_sections,

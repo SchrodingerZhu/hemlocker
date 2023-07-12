@@ -68,6 +68,56 @@ impl LockWord {
     pub fn is_locked(&self) -> bool {
         !self.tail.load(Ordering::Acquire).is_null()
     }
+    pub unsafe fn untracked_lock_with(&self, holder: &HolderWord) {
+        let holder_ptr = holder as *const _ as *mut _;
+        let pred = self.tail.swap(holder_ptr, Ordering::AcqRel);
+        if !pred.is_null() {
+            let mut waiter = SpinWait::new();
+            let addr = self as *const _ as *mut _;
+
+            // Check if predecessor want to grant/release the lock to us.
+            // [`compare_exchange_weak`] is good enough as we are going to spin.
+            while (*pred)
+                .grant
+                .compare_exchange_weak(addr, ptr::null_mut(), Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+            {
+                waiter.spin();
+            }
+        }
+    }
+    pub unsafe fn untracked_unlock_with(&self, holder: &HolderWord) {
+        // Do aggressive handover. This is safe as we are holding a reference to holder, so the holder is
+        // guaranteed by Rust type system to be alive during the process.
+        holder
+            .grant
+            .store(self as *const _ as *mut _, Ordering::Release);
+        let holder_addr = holder as *const _ as *mut _;
+
+        // Since we only do single round of [`compare_exchange`], we have to use the strong version, which rule out
+        // suprious failures.
+        match self.tail.compare_exchange(
+            holder_addr,
+            ptr::null_mut(),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                // There is no thread waiting for the lock. We decrease the weak count of the holder on our own.
+                // Notice that the holder is still alive even though we have decreased the weak count.
+                holder.grant.store(ptr::null_mut(), Ordering::Release);
+            }
+            Err(_) => {
+                // There is a thread waiting for the lock. We need to wait for the successor to notice the unlock.
+                // Just do a spin wait.
+                let mut waiter = SpinWait::new();
+                while !holder.grant.fetch_ptr_add(0, Ordering::AcqRel).is_null() {
+                    waiter.spin();
+                }
+            }
+        }
+    }
+
     pub fn try_lock_with(&self, holder: &Arc<HolderWord>) -> Result<(), Error> {
         // First, we check if target holder is currently awaiting for its successor to notice the unlock.
         // If so, such progress can not be interrupted.
