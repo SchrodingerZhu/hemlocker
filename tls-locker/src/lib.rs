@@ -81,3 +81,32 @@ pub type RobustHemLock<T> = lock_api::Mutex<RobustRawLocker, T>;
 pub type RobustHemLockGuard<'a, T> = lock_api::MutexGuard<'a, RobustRawLocker, T>;
 pub type HemLock<T> = lock_api::Mutex<RawLocker, T>;
 pub type HemLockGuard<'a, T> = lock_api::MutexGuard<'a, RawLocker, T>;
+
+#[cfg(test)]
+mod test {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    #[test]
+    fn robust_hemlock() {
+        use crate::RobustHemLock;
+        let lock = RobustHemLock::new(());
+        let flag = Arc::new(AtomicBool::new(false));
+
+        std::thread::scope(|x| {
+            x.spawn(|| {
+                std::mem::forget(lock.lock());
+                flag.store(true, Ordering::SeqCst);
+            });
+
+            x.spawn(|| {
+                while !flag.load(Ordering::SeqCst) {
+                    std::thread::yield_now();
+                }
+                lock.try_lock();
+            });
+        });
+    }
+}
