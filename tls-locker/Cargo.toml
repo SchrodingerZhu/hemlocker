@@ -1,0 +1,10 @@
+[package]
+name = "tls-locker"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+raw-locker = { path = "../raw-locker" }
+lock_api = { version = "0.4" }

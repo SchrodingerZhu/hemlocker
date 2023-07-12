@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+    "raw-locker",
+    "tls-locker",
+    "benchmark",
+]
+
+[profile.release]
+lto = true

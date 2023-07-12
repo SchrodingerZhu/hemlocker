@@ -1,0 +1,18 @@
+[package]
+name = "hemlocker-benchmark"
+version = "0.0.0"
+edition = "2018"
+
+[dependencies]
+parking_lot = "0.12"
+tls-locker = { path = "../tls-locker" }
+seqlock = "0.1"
+libc = "0.2"
+
+
+[features]
+nightly = ["parking_lot/nightly"]
+deadlock_detection = ["parking_lot/deadlock_detection"]
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["synchapi"] }
