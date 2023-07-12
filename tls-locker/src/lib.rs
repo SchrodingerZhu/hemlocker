@@ -1,4 +1,4 @@
-use lock_api::{RawMutex, GuardNoSend};
+use lock_api::{GuardNoSend, RawMutex};
 use raw_locker::{Error::*, HolderWord, LockWord};
 use std::sync::Arc;
 std::thread_local! {

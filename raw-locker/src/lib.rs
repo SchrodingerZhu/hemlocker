@@ -84,11 +84,11 @@ impl LockWord {
         if !pred.is_null() {
             // Upgrade the weak pointer to a strong one as we need to access the predecessor.
             let pred = unsafe { Weak::from_raw(pred) };
+            let mut waiter = SpinWait::new();
             loop {
                 match pred.upgrade() {
                     Some(pred) => {
                         let addr = self as *const _ as *mut _;
-                        let mut waiter = SpinWait::new();
                         // Check if predecessor want to grant/release the lock to us.
                         // [`compare_exchange_weak`] is good enough as we are going to spin.
                         if pred
