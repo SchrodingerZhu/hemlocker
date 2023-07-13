@@ -51,6 +51,10 @@ impl LockWord {
             }
         }
     }
+    pub unsafe fn try_lock(&self, holder: &HolderWord) -> bool {
+        let holder_ptr = holder as *const _ as *mut _;
+        self.tail.compare_exchange(ptr::null_mut(), holder_ptr, Ordering::AcqRel, Ordering::Acquire).is_ok()
+    }
     pub unsafe fn unlock(&self, holder: &HolderWord) {
         // Do aggressive handover. This is safe as we are holding a reference to holder, so the holder is
         // guaranteed by Rust type system to be alive during the process.

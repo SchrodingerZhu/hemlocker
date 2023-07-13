@@ -30,7 +30,11 @@ unsafe impl RawMutex for RawLocker {
     }
 
     fn try_lock(&self) -> bool {
-        unimplemented!("try lock to not supported with HemLock")
+        let locked = TLS_HOLDER_WORD.with(|holder| unsafe { self.0.try_lock(holder) });
+        if locked {
+            HOUSE_KEEPER.with(|counter| counter.held_locks.update(|x| x + 1));
+        }
+        locked
     }
 
     unsafe fn unlock(&self) {
