@@ -1,50 +1,16 @@
+#![feature(cell_update, thread_id_value)]
+use std::cell::Cell;
+
 use lock_api::{GuardNoSend, RawMutex};
-use raw_locker::{Error::*, HolderWord, LockWord};
-use std::sync::Arc;
+use raw_locker::{HolderWord, LockWord};
 std::thread_local! {
-    static ROBURST_TLS_HOLDER_WORD : Arc<HolderWord> = Default::default();
     static TLS_HOLDER_WORD : HolderWord = Default::default();
+    static HOUSE_KEEPER: HouseKeeper = Default::default();
 }
 
-#[repr(transparent)]
-pub struct RobustRawLocker(LockWord);
-
-// 2. Implement RawMutex for this type
-unsafe impl RawMutex for RobustRawLocker {
-    #[allow(clippy::declare_interior_mutable_const)]
-    const INIT: RobustRawLocker = RobustRawLocker(LockWord::new());
-
-    // A spinlock guard can be sent to another thread and unlocked there
-    type GuardMarker = GuardNoSend;
-
-    fn lock(&self) {
-        ROBURST_TLS_HOLDER_WORD.with(|holder| match self.0.try_lock_with(holder) {
-            Ok(_) => {}
-            Err(DeadPredecessor) => {
-                panic!("dead predecessor detected")
-            }
-            Err(UnlockInProgress) => {
-                panic!("locking logic error detected")
-            }
-        })
-    }
-
-    fn try_lock(&self) -> bool {
-        ROBURST_TLS_HOLDER_WORD.with(|holder| self.0.try_lock_with(holder).is_ok())
-    }
-
-    unsafe fn unlock(&self) {
-        ROBURST_TLS_HOLDER_WORD.with(|holder| {
-            if self.0.try_unlock_with(holder).is_err() {
-                panic!("unlocking logic error detected")
-            }
-        })
-    }
-
-    #[inline]
-    fn is_locked(&self) -> bool {
-        self.0.is_locked()
-    }
+#[derive(Default)]
+struct HouseKeeper {
+    held_locks: Cell<usize>,
 }
 
 #[repr(transparent)]
@@ -59,16 +25,17 @@ unsafe impl RawMutex for RawLocker {
     type GuardMarker = GuardNoSend;
 
     fn lock(&self) {
-        TLS_HOLDER_WORD.with(|holder| unsafe { self.0.untracked_lock_with(holder) });
+        TLS_HOLDER_WORD.with(|holder| unsafe { self.0.lock(holder) });
+        HOUSE_KEEPER.with(|counter| counter.held_locks.update(|x| x + 1));
     }
 
     fn try_lock(&self) -> bool {
-        TLS_HOLDER_WORD.with(|holder| unsafe { self.0.untracked_lock_with(holder) });
-        true
+        unimplemented!("try lock to not supported with HemLock")
     }
 
     unsafe fn unlock(&self) {
-        TLS_HOLDER_WORD.with(|holder| unsafe { self.0.untracked_unlock_with(holder) });
+        TLS_HOLDER_WORD.with(|holder| unsafe { self.0.unlock(holder) });
+        HOUSE_KEEPER.with(|counter| counter.held_locks.update(|x| x - 1));
     }
 
     #[inline]
@@ -77,55 +44,32 @@ unsafe impl RawMutex for RawLocker {
     }
 }
 
-pub type RobustHemLock<T> = lock_api::Mutex<RobustRawLocker, T>;
-pub type RobustHemLockGuard<'a, T> = lock_api::MutexGuard<'a, RobustRawLocker, T>;
 pub type HemLock<T> = lock_api::Mutex<RawLocker, T>;
 pub type HemLockGuard<'a, T> = lock_api::MutexGuard<'a, RawLocker, T>;
 
+impl Drop for HouseKeeper {
+    fn drop(&mut self) {
+        let count = self.held_locks.get();
+        if count != 0 {
+            panic!(
+                "thread {} failed to release {} lock(s) before exiting",
+                std::thread::current().id().as_u64(),
+                count
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    };
+    use crate::HemLock;
 
     #[test]
-    fn robust_hemlock() {
-        use crate::RobustHemLock;
-        let lock = RobustHemLock::new(());
-        let flag = Arc::new(AtomicBool::new(false));
-
-        std::thread::scope(|x| {
-            x.spawn(|| {
-                std::mem::forget(lock.lock());
-                flag.store(true, Ordering::SeqCst);
-            });
-
-            x.spawn(|| {
-                while !flag.load(Ordering::SeqCst) {
-                    std::thread::yield_now();
-                }
-                lock.try_lock();
-            });
-        });
-    }
-
-    #[test]
-    fn no_dead_loop_with_naughty_thread() {
-        use crate::RobustHemLock;
-        let lock = RobustHemLock::new(());
-
-        std::thread::scope(|x| {
-            for _ in 0..10 {
-                x.spawn(|| {
-                    for _ in 0..100 {
-                        if let Some(guard) = lock.try_lock() {
-                            std::mem::forget(guard);
-                            break;
-                        }
-                    }
-                });
-            }
-        });
+    fn simple_addition() {
+        use rayon::prelude::*;
+        let data = HemLock::new(0);
+        (1..=1000).into_par_iter()
+            .for_each(|x| *data.lock() += x);
+        assert_eq!(data.lock().clone(), 500500);
     }
 }

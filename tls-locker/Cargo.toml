@@ -8,3 +8,6 @@ edition = "2021"
 [dependencies]
 raw-locker = { path = "../raw-locker" }
 lock_api = { version = "0.4" }
+
+[dev-dependencies]
+rayon = { version = "1.7" }
