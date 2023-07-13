@@ -159,6 +159,7 @@ impl LockWord {
                             // predecessor.
                             drop(pred);
                             waiter.spin();
+                            // Additionally, check if the lock is already poisoned
                             if self.poisoned.load(Ordering::Acquire) {
                                 return Err(Error::DeadPredecessor);
                             }
@@ -169,6 +170,8 @@ impl LockWord {
                     }
                     // The predecessor is dead. We cannot acquire the lock anymore.
                     None => {
+                        // broadcast that current lock is poisoned so successors will also
+                        // know about the death
                         self.poisoned.store(true, Ordering::Release);
                         return Err(Error::DeadPredecessor);
                     }
